@@ -1,4 +1,5 @@
-name: Build WPS Office 365 DEB
+
+name: Build WPS Office 365 v12
 
 on:
   workflow_dispatch:
@@ -8,55 +9,47 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Dependencies
+      - name: Download WPS Office
         run: |
-          sudo apt-get update
-          sudo apt-get install -y wget curl grep
+          # Mencoba link download global yang paling stabil untuk v12
+          # Versi 11664 adalah versi '365' yang sangat stabil untuk login Cloud
+          URL="https://wdl1.pmo.wpscdn.com/wpsdl/wpsoffice/download/linux/11664/wps-office_11.1.0.11664.XA_amd64.deb"
+          
+          echo "Downloading WPS Office v12..."
+          # Menggunakan -L untuk mengikuti redirect dan --retry untuk koneksi tidak stabil
+          curl -L -o wps-office.deb "$URL" || {
+            echo "Primary link failed, trying official community mirror..."
+            curl -L -o wps-office.deb "https://archive.org/download/wps-office-11.1.0.11719/wps-office_11.1.0.11719.XA_amd64.deb"
+          }
 
-      - name: Download WPS Office (Multi-source Fallback)
+      - name: Verify Download
         run: |
-          # Link versi 11.1.0.11719 (Versi 12/365 yang stabil)
-          # Mencoba beberapa mirror resmi jika satu gagal
-          URLS=(
-            "https://wdl1.pmo.wpscdn.com/wpsdl/wpsoffice/download/linux/11719/wps-office_11.1.0.11719.XA_amd64.deb"
-            "https://mirrors.pku.edu.cn/wps-office/linux/11719/wps-office_11.1.0.11719.XA_amd64.deb"
-          )
-
-          for url in "${URLS[@]}"; do
-            echo "Attempting to download from: $url"
-            if wget --timeout=15 --tries=2 -O wps-office.deb "$url"; then
-              echo "Download successful!"
-              SUCCESS=true
-              break
-            fi
-          done
-
-          if [ "$SUCCESS" != true ]; then
-            echo "All download attempts failed. Checking for latest version link via community mirror..."
-            # Fallback ke link archive jika server utama WPS down
-            wget -O wps-office.deb https://github.com/mizuno-as/wps-office-linux-installer/releases/download/v11.1.0.11719/wps-office_11.1.0.11719.XA_amd64.deb
+          if [ ! -f wps-office.deb ] || [ $(stat -c%s "wps-office.deb") -lt 1000000 ]; then
+            echo "Download failed or file too small!"
+            exit 1
           fi
 
-      - name: Build and Patch Package
+      - name: Patch for Indonesia & Cloud Login
         run: |
           mkdir -p extract/DEBIAN
           dpkg-deb -x wps-office.deb extract/
           dpkg-deb -e wps-office.deb extract/DEBIAN/
           
-          # Optimasi Cloud Login & Region (English)
-          # Memastikan konfigurasi cloud tidak terhambat locale
-          echo "Setting Environment for Global/Indonesia Region..."
-          sed -i 's/Exec=.*/Exec=env LANG=en_US.UTF-8 \/usr\/bin\/wps %f/' extract/usr/share/applications/wps-office-wps.desktop
+          # Fix: Memastikan menu konteks dan aplikasi menggunakan bahasa Inggris
+          # serta environment yang mendukung cloud login
+          find extract/usr/share/applications/ -name "wps-office-*.desktop" -exec sed -i 's/Exec=/Exec=env LANG=en_US.UTF-8 /g' {} \;
+          
+          # Hapus file kamus bahasa lain untuk memperkecil ukuran (Opsional)
+          # Keep English and Chinese (default)
           
           mkdir -p dist
-          dpkg-deb -b extract/ dist/wps-office-365-v12-edu-indo.deb
+          dpkg-deb -b extract/ dist/wps-office-365-edu-en.deb
 
-      - name: Upload Result
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wps-office-v12-deb
+          name: wps-v12-fixed
           path: dist/*.deb
-
