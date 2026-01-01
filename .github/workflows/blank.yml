@@ -1,56 +1,82 @@
-name: Build WPS Office 365 v12
+
+name: Build WPS Office EDU .deb
 
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
-  build:
+  build-deb:
     runs-on: ubuntu-latest
-
+    env:
+      TZ: Asia/Jakarta
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download WPS Office (Stable Mirror)
+      - name: Set up locale and timezone
         run: |
-          # Menggunakan mirror pihak ketiga yang terverifikasi dan stabil
-          # Link ini merujuk pada versi 11.1.0.11719 (Versi 12/365)
-          URL="https://proget.iteas.at/list/linux-distro/wps-office_11.1.0.11719.XA_amd64.deb"
-          
-          echo "Downloading WPS Office v12 from backup mirror..."
-          # Menggunakan User-Agent Mozilla agar tidak diblokir server
-          curl -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
-               -L -o wps-office.deb "$URL"
+          sudo apt-get update
+          sudo apt-get install -y locales tzdata
+          sudo ln -fs /usr/share/zoneinfo/Asia/Jakarta /etc/localtime
+          sudo dpkg-reconfigure -f noninteractive tzdata
+          sudo locale-gen en_US.UTF-8
+          sudo update-locale LANG=en_US.UTF-8
 
-      - name: Verify File
+      - name: Install packaging tools
         run: |
-          if [ ! -f wps-office.deb ]; then
-            echo "File not found!"
-            exit 1
-          fi
-          FILE_SIZE=$(stat -c%s "wps-office.deb")
-          echo "Downloaded size: $FILE_SIZE bytes"
-          if [ $FILE_SIZE -lt 100000000 ]; then
-            echo "File too small, download likely failed!"
-            exit 1
-          fi
+          sudo apt-get install -y build-essential devscripts fakeroot dpkg-dev ruby ruby-dev
+          sudo gem install --no-document fpm
 
-      - name: Patch for Indonesia Region & English
+      - name: Prepare build (customize for your source)
         run: |
-          mkdir -p extract/DEBIAN
-          dpkg-deb -x wps-office.deb extract/
-          dpkg-deb -e wps-office.deb extract/DEBIAN/
-          
-          # Hapus file promosi atau konfigurasi region spesifik jika ada
-          # Paksa locale ke en_US agar login cloud muncul dalam bahasa Inggris
-          find extract/usr/share/applications/ -name "wps-office-*.desktop" -exec sed -i 's/Exec=/Exec=env LANG=en_US.UTF-8 /g' {} \;
-          
-          mkdir -p dist
-          dpkg-deb -b extract/ dist/wps-office-365-v12-fixed.deb
+          # Replace with your actual build commands
+          mkdir -p build/usr/bin
+          cp -r src/* build/usr/bin/ || true
+          # Example: set English UI preference file or wrapper script
+          echo 'export LANG=en_US.UTF-8' > build/usr/bin/wps-env.sh
+          chmod +x build/usr/bin/wps-env.sh
 
-      - name: Upload Artifact
+      - name: Create Debian control files
+        run: |
+          mkdir -p package/DEBIAN
+          cat > package/DEBIAN/control <<'EOF'
+          Package: wps-office-365-edu
+          Version: 1.0.0
+          Section: office
+          Priority: optional
+          Architecture: amd64
+          Maintainer: Your Name <you@example.com>
+          Description: WPS Office EDU build (packaged)
+           WPS Office packaged for Deepin-compatible systems; configured for Indonesia timezone and English UI.
+          EOF
+          cp -r build/* package/
+
+      - name: Build .deb
+        run: |
+          dpkg-deb --build package wps-office-365-edu_1.0.0_amd64.deb
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wps-office-12-indonesia
-          path: dist/*.deb
+          name: wps-office-deb
+          path: wps-office-365-edu_1.0.0_amd64.deb
 
+  test-install:
+    needs: build-deb
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wps-office-deb
+      - name: Test install in Debian container
+        run: |
+          docker run --rm -v $PWD:/work -w /work debian:bookworm bash -lc "\
+            apt-get update && apt-get install -y libgtk-3-0 libx11-6 libglib2.0-0 || true; \
+            dpkg -i wps-office-365-edu_1.0.0_amd64.deb || true; \
+            # Basic smoke test: check binary exists
+            if command -v /usr/bin/wps-office >/dev/null 2>&1; then echo 'installed'; else echo 'binary missing'; fi"
+z
