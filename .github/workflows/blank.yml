@@ -1,0 +1,52 @@
+name: Build WPS Office 365 DEB
+
+on:
+  workflow_dispatch: # Menjalankan workflow secara manual
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget curl dpkg-dev
+
+      - name: Download Latest WPS Office DEB
+        run: |
+          # Mengambil installer resmi WPS Office 12 untuk Linux
+          # Link ini biasanya merujuk ke versi global/multibahasa
+          wget -O wps-office.deb https://wdl1.pmo.wpscdn.com/wpsdl/wpsoffice/download/linux/11719/wps-office_11.1.0.11719.XA_amd64.deb
+          
+          # Catatan: Link di atas adalah contoh. WPS sering memperbarui link.
+          # Versi 12 (365) seringkali didistribusikan via komunitas atau flathub, 
+          # namun versi .deb resmi terbaru sudah mendukung login cloud.
+
+      - name: Customize Package (Optional)
+        run: |
+          # Ekstrak paket untuk modifikasi jika diperlukan
+          mkdir -p extract/DEBIAN
+          dpkg-deb -x wps-office.deb extract/
+          dpkg-deb -e wps-office.deb extract/DEBIAN/
+          
+          # Pengaturan Bahasa & Region default (En-US)
+          # WPS secara otomatis mendeteksi locale sistem (id_ID atau en_US)
+          echo "Setting default language to English..."
+          sed -i 's/Lang=.*/Lang=en_US/' extract/usr/bin/wps || true
+
+      - name: Rebuild DEB Package
+        run: |
+          mkdir -p dist
+          # Memberi nama file baru dengan tag region/versi
+          dpkg-deb -b extract/ dist/wps-office-365-edu-en-id.deb
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wps-office-custom-deb
+          path: dist/wps-office-365-edu-en-id.deb
+
